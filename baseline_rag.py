@@ -109,7 +109,7 @@ def process_file(file_path, base_dir):
                 "base_dir": base_dir
             }
         )
-        language = "c" if file_path.endswith(('.c', '.h')) else 'python'
+        language = 'c' if file_path.endswith(('.c', '.h')) else 'python'
         
         # Configure the CodeSplitter
         code_splitter = CodeSplitter(
@@ -125,16 +125,17 @@ def process_file(file_path, base_dir):
         # Convert nodes to the required format
         chunks = []
         for node in nodes:
-            chunk = {
-                "filepath": node.metadata.get("filepath", ""),
-                "filename": node.metadata.get("filename", ""),
-                "relpath": node.metadata.get("relpath", ""),
-                "start_line": node.metadata.get("start_line", 0),
-                "end_line": node.metadata.get("end_line", 0),
-                "length": node.metadata.get("end_line", 0) - node.metadata.get("start_line", 0) + 1,
-                "content": node.text
-            }
-            chunks.append(chunk)
+            if node.text:
+                chunk = {
+                    "filepath": node.metadata.get("filepath", ""),
+                    "filename": node.metadata.get("filename", ""),
+                    "relpath": node.metadata.get("relpath", ""),
+                    "start_line": node.metadata.get("start_line", 0),
+                    "end_line": node.metadata.get("end_line", 0),
+                    "length": node.metadata.get("end_line", 0) - node.metadata.get("start_line", 0) + 1,
+                    "content": node.text
+                }
+                chunks.append(chunk)
         
         return chunks
     
@@ -206,12 +207,9 @@ def index_chunks(chunk_file):
     print(f"Loaded {len(chunks)} chunks from {chunk_file}")
     
     # Setup ChromaDB with OpenAI embeddings
-    # embedding_function = create_openai_ef()
-    embedding_function = create_local_ef()
-    print("Created embedding function, testing it here:")
-    print(embedding_function(["Here is an article about llamas..."]))
+    embedding_function = create_openai_ef()
+    # embedding_function = create_local_ef()
     client = get_chroma_client()
-    #client = chromadb.PersistentClient(path="ollama")
     print("Received chroma client...")
     collection = get_collection(client, embedding_function)
     
@@ -242,13 +240,14 @@ def index_chunks(chunk_file):
     batch_size = 100
     for i in range(0, len(documents), batch_size):
         end_idx = min(i + batch_size, len(documents))
-        print(f"Indexing chunks {i} to {end_idx-1}...")
-        
-        collection.add(
-            ids=ids[i:end_idx],
-            documents=documents[i:end_idx],
-            metadatas=metadatas[i:end_idx]
-        )
+        if ids[i:end_idx] and documents[i:end_idx] and metadatas[i:end_idx]:
+            print(f"Indexing chunks {i} to {end_idx-1}...")
+            
+            collection.add(
+                ids=ids[i:end_idx],
+                documents=documents[i:end_idx],
+                metadatas=metadatas[i:end_idx]
+            )
     
     count = collection.count()
     print(f"Successfully indexed {count} chunks in ChromaDB")
@@ -257,7 +256,8 @@ def retrieve_chunks(query, top_k=5):
     """Retrieve chunks from ChromaDB based on the query."""
     # Setup ChromaDB with OpenAI embeddings
     # embedding_function = create_openai_ef()
-    embedding_function = create_local_ef()
+    embedding_function = create_openai_ef()
+    # embedding_function = create_local_ef()
     client = get_chroma_client()
     
     try:
