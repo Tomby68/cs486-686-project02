@@ -30,6 +30,14 @@ import chromadb
 from chromadb.utils import embedding_functions
 from chromadb.errors import InvalidCollectionException
 import openai
+from litellm import completion
+from dotenv import load_dotenv
+
+load_dotenv()
+
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY_PROJECT02")
+if not OPENROUTER_API_KEY:
+    raise Exception("Openrouter API key not found!")
 
 # Import the CodeSplitter
 try:
@@ -71,7 +79,6 @@ def create_local_ef():
     
     OLLAMA_API_URL = "http://localhost:11434/api/embeddings"
     MODEL = "nomic-embed-text"
-    print(f"Returning Ollama embedding function: {type(embedding_functions.OllamaEmbeddingFunction)}")
     return embedding_functions.OllamaEmbeddingFunction(
         model_name=MODEL,
         url=OLLAMA_API_URL,
@@ -79,11 +86,11 @@ def create_local_ef():
 
     
 def find_source_files(directory):
-    """Find all .c and .h files in directory and subdirectories."""
+    """Find all .c, .h, and .py files in directory and subdirectories."""
     source_files = []
     for root, _, files in os.walk(directory):
         for file in files:
-            if file.endswith(('.c', '.h')):
+            if file.endswith(('.c', '.h', '.py')):
                 source_files.append(os.path.join(root, file))
     return source_files
 
@@ -102,10 +109,11 @@ def process_file(file_path, base_dir):
                 "base_dir": base_dir
             }
         )
+        language = "c" if file_path.endswith(('.c', '.h')) else 'python'
         
         # Configure the CodeSplitter
         code_splitter = CodeSplitter(
-            language="c",
+            language=language,
             chunk_lines=60,  # Adjust as needed
             chunk_lines_overlap=5,  # Adjust as needed
             max_chars=2048,  # Adjust as needed
@@ -301,6 +309,27 @@ def reset_db():
     get_collection(client, embedding_function)
     print(f"Created a new empty collection '{COLLECTION_NAME}'")
 
+def query_llm(prompt, context, model="openrouter/google/gemini-2.0-flash-001"):
+    prompt = " ".join([prompt, "RAG CONTEXT:"])
+    for i in range(len(context)):
+        relevant_chunk = context[i]
+        prompt = "".join([prompt,
+                          f'\nCHUNK {i}:\n',
+                          f'filepath: {relevant_chunk["filepath"]}\n',
+                          f'start_line: {relevant_chunk["start_line"]}\n',
+                          f'end_line: {relevant_chunk["end_line"]}\n',
+                          f'content: {relevant_chunk["content"]}'])
+    print(f"PROMPT WITH CONTEXT START:\n{prompt}")
+    print("PROMPT WITH CONTEXT END")
+
+    response = completion(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        api_key=OPENROUTER_API_KEY,
+        api_base="https://openrouter.ai/api/v1"
+    )
+    return response.choices[0].message.content
+
 def main():
     parser = argparse.ArgumentParser(description="Code RAG - ChromaDB-based code retrieval system")
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
@@ -318,10 +347,11 @@ def main():
     retrieve_parser = subparsers.add_parser("retrieve", help="Retrieve chunks based on query")
     retrieve_parser.add_argument("query", help="Query string for retrieval")
     retrieve_parser.add_argument("-k", "--top-k", type=int, default=5, help="Number of results to return")
+    retrieve_parser.add_argument("-s", "--send", action="store_true", help="Send query and retrieved context to LLM")
     
     # Reset command
     subparsers.add_parser("resetdb", help="Reset the ChromaDB database")
-    
+
     args = parser.parse_args()
     
     if not args.command:
@@ -336,7 +366,11 @@ def main():
     
     elif args.command == "retrieve":
         results = retrieve_chunks(args.query, args.top_k)
-        print(json.dumps(results, indent=2))
+        print(f"Retrieved context:\n{json.dumps(results, indent=2)}")
+        if args.send:
+            print("Sending query to llm...")
+            llm_response = query_llm(args.query, results)
+            print(f"Response: {llm_response}")
     
     elif args.command == "resetdb":
         reset_db()
